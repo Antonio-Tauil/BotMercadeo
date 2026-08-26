@@ -1,0 +1,125 @@
+"""
+config.py — Configuración general del BotMercadeo: conexión a Slack, ID del Sheet de
+registro de casos, categorías del formulario y su mapeo a etiqueta de comisión.
+
+Este bot es una APP DE SLACK SEPARADA de Robotín (BotCobrosQuoota) — tiene su propio
+SLACK_BOT_TOKEN / SLACK_APP_TOKEN y su propio deploy en Railway. Puede convivir sin
+problema en el mismo workspace de Slack.
+"""
+import os
+import json
+from concurrent.futures import ThreadPoolExecutor
+from slack_bolt import App
+from google.oauth2.service_account import Credentials
+import gspread
+
+# Mismo motivo que en Robotín: más hilos disponibles = menos riesgo de que un comando quede
+# esperando turno más de los ~3 segundos que Slack da para usar un 'trigger_id' antes de que
+# se venza (lo que haría fallar la apertura del modal).
+app = App(token=os.environ["SLACK_BOT_TOKEN"], listener_executor=ThreadPoolExecutor(max_workers=30))
+
+# ============ CONFIGURACIÓN GENERAL ============
+# ID del Sheet donde se registra cada caso reportado desde Slack (Componente 5 del documento).
+# Poner el ID real del Sheet en la variable de entorno SHEET_ID_CASOS_MERCADEO en Railway.
+SHEET_ID_CASOS_MERCADEO = os.environ.get("SHEET_ID_CASOS_MERCADEO", "")
+PESTANA_CASOS = os.environ.get("PESTANA_CASOS_MERCADEO", "Casos")
+
+# Canal donde se publica un resumen de cada caso nuevo (opcional — dejar vacío para no publicar).
+CANAL_CASOS_MERCADEO = os.environ.get("CANAL_CASOS_MERCADEO", "")
+
+# ID de Slack de Astrid (rol de supervisión — dashboard de ganancias, sección 5.3 y 9.2 del
+# documento). Se usa más adelante si el bot necesita avisarle algo directamente por Slack.
+# Poner su ID real cuando se tenga (se obtiene con /listar-ids una vez instalado el bot).
+ASTRID_SLACK_ID = os.environ.get("ASTRID_SLACK_ID", "")
+# ============ FIN CONFIGURACIÓN GENERAL ============
+
+
+# ============ CATEGORÍAS DE CASO Y MAPEO A ETIQUETA DE COMISIÓN (secciones 4.4 y 7.3) ============
+CATEGORIAS = [
+    "Acceso",
+    "Registro",
+    "Carga de Documentos",
+    "Envío de Contrato",
+    "Conciliación",
+    "Liquidación",
+    "FAQ",
+    "Baja de Nivel",
+    "Otros",
+]
+
+# 'Otros' no tiene etiqueta fija: el agente elige manualmente entre las 4 (ver formularios_casos.py)
+ETIQUETA_POR_CATEGORIA = {
+    "Acceso": "Acceso y registro",
+    "Registro": "Acceso y registro",
+    "Carga de Documentos": "Carga de Doc's / Envío de contratos",
+    "Envío de Contrato": "Carga de Doc's / Envío de contratos",
+    "Conciliación": "Conciliación y Liquidación",
+    "Liquidación": "Conciliación y Liquidación",
+    "FAQ": "FAQ",
+    "Baja de Nivel": "FAQ",
+}
+
+ETIQUETAS_MANUALES = [
+    "Acceso y registro",
+    "Carga de Doc's / Envío de contratos",
+    "Conciliación y Liquidación",
+    "FAQ",
+]
+
+ESTADOS_CASO = ["Abierto", "En espera", "Sin respuesta", "Cerrado", "Finalizado"]
+# ============ FIN CATEGORÍAS ============
+
+
+# ============ CONEXIÓN COMPARTIDA A GOOGLE SHEETS ============
+# Reutiliza el mismo patrón de Robotín: una sola conexión cacheada en memoria en vez de
+# reconectar en cada llamada (la parte lenta de hablar con Sheets es autenticarse, no leer/escribir).
+_CLIENTE_SHEETS_CACHEADO = None
+_PESTANAS_CACHEADAS = {}
+
+
+def get_cliente_sheets():
+    global _CLIENTE_SHEETS_CACHEADO
+    if _CLIENTE_SHEETS_CACHEADO is not None:
+        return _CLIENTE_SHEETS_CACHEADO
+    creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS"])
+    creds_json["private_key"] = creds_json["private_key"].replace("\\n", "\n")
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(creds_json, scopes=scopes)
+    _CLIENTE_SHEETS_CACHEADO = gspread.authorize(creds)
+    return _CLIENTE_SHEETS_CACHEADO
+
+
+def abrir_pestana_casos():
+    """Abre (con caché en memoria) la pestaña donde se registran los casos."""
+    clave = (SHEET_ID_CASOS_MERCADEO, PESTANA_CASOS)
+    if clave in _PESTANAS_CACHEADAS:
+        return _PESTANAS_CACHEADAS[clave]
+    cliente = get_cliente_sheets()
+    hoja = cliente.open_by_key(SHEET_ID_CASOS_MERCADEO)
+    ws = hoja.worksheet(PESTANA_CASOS)
+    _PESTANAS_CACHEADAS[clave] = ws
+    return ws
+# ============ FIN CONEXIÓN A GOOGLE SHEETS ============
+
+
+# ============ NOMBRE REAL DEL AGENTE (sin lista fija — se busca en vivo por su ID de Slack) ============
+# A propósito NO se usa una lista fija tipo "nombre -> ID de Slack" como COBRADOR_SLACK_IDS en
+# Robotín: esa lista se desactualiza cada vez que alguien nuevo entra o hereda la cuenta de
+# Slack de quien se fue (así pasó con Valentina/Rebeca). En su lugar, el nombre del agente se
+# consulta en vivo a la API de Slack por su ID — siempre está al día, sin mantenimiento manual.
+_NOMBRES_CACHEADOS = {}
+
+
+def nombre_real_del_agente(client, user_id):
+    if user_id in _NOMBRES_CACHEADOS:
+        return _NOMBRES_CACHEADOS[user_id]
+    try:
+        info = client.users_info(user=user_id)
+        perfil = info["user"]["profile"]
+        nombre = perfil.get("real_name") or info["user"].get("real_name") or user_id
+    except Exception as e:
+        print(f"⚠️ No se pudo obtener el nombre real de {user_id}: {e}")
+        nombre = user_id
+    _NOMBRES_CACHEADOS[user_id] = nombre
+    return nombre
+# ============ FIN NOMBRE REAL DEL AGENTE ============
