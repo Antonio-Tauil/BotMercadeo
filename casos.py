@@ -17,12 +17,76 @@ from config import (
     app, CATEGORIAS, ETIQUETA_POR_CATEGORIA, ESTADOS_CASO, pestana_de_categoria,
     abrir_pestana_casos, nombre_real_del_agente, CANAL_CASOS_MERCADEO, ASTRID_SLACK_ID,
 )
-from formularios_casos import construir_blocks_formulario, specs_validacion
+from formularios_casos import construir_blocks_formulario, specs_validacion, FORM_SPECS
 from validaciones import _guardar_fila_por_encabezado, _VALIDADORES
 
 
 CALLBACK_PASO1 = "caso_mercadeo_categoria"
 CALLBACK_PASO2 = "caso_mercadeo_datos"
+
+
+# Estilo "ticket" elegido para la tarjeta del canal: un ícono por tipo de campo y un
+# color/círculo distinto por categoría, para reconocer el tipo de caso de un vistazo.
+ICONO_CAMPO = {
+    "Nombre": "👤", "Cedula": "🪪", "Empresa": "🏢", "Telefono": "📞", "Correo": "✉️",
+    "Banco emisor": "🏦", "Referencia": "🔢", "Monto": "💰", "Fecha de pago": "📅",
+    "Cuotas pagadas": "🧾", "Descripcion": "📝",
+}
+
+CIRCULO_Y_COLOR_CATEGORIA = {
+    "Acceso": ("🟢", "#2EB67D"),
+    "Registro": ("🟡", "#ECB22E"),
+    "Carga de Documentos": ("🔵", "#36C5F0"),
+    "Envío de Contrato": ("🟣", "#8B5CF6"),
+    "Conciliación": ("🔴", "#E01E5A"),
+    "Liquidación": ("🟠", "#F2952F"),
+    "FAQ": ("⚪", "#8E8E93"),
+    "Baja de Nivel": ("⚫", "#3C3C3C"),
+    "Otros": ("🟤", "#6B4226"),
+}
+
+
+def _campos_llenados(categoria, datos):
+    """Lista [(clave, etiqueta_visible, valor), ...] de los campos que el agente realmente
+    llenó, en el mismo orden del formulario. La 'clave' viaja aparte para poder buscar su
+    ícono en ICONO_CAMPO sin tener que adivinarlo a partir de la etiqueta visible."""
+    campos = []
+    for clave, etiqueta_visible, _validador, _multilinea in FORM_SPECS[categoria]:
+        valor = datos.get(clave, "")
+        if valor:
+            campos.append((clave, etiqueta_visible, valor))
+    return campos
+
+
+def _resumen_datos_formulario(categoria, datos):
+    """Versión en texto plano de _campos_llenados ('*Etiqueta:* valor' por línea) — se usa
+    como fallback de notificación/accesibilidad del mensaje con tarjeta."""
+    return [f"*{etiqueta}:* {valor}" for _clave, etiqueta, valor in _campos_llenados(categoria, datos)]
+
+
+def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos):
+    """Arma el mensaje tipo 'ticket' para el canal: una franja de color por categoría
+    (usando el color lateral de los 'attachments' de Slack) + una lista vertical de campos
+    con ícono + un pie con la etiqueta, quién reportó el caso y cuándo."""
+    campos = _campos_llenados(categoria, datos)
+    circulo, color = CIRCULO_Y_COLOR_CATEGORIA.get(categoria, ("⚪", "#8E8E93"))
+
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"{circulo} *{categoria}*"}},
+    ]
+    if campos:
+        lineas = [f"{ICONO_CAMPO.get(clave, '•')} *{etq}:* {val}" for clave, etq, val in campos]
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lineas)}})
+    blocks.append({
+        "type": "context",
+        "elements": [{
+            "type": "mrkdwn",
+            "text": f"🏷️ *{etiqueta}*   ·   🙋 Reportado por *{nombre_agente}*   ·   🕒 {ahora.strftime('%d/%m/%Y %H:%M')}",
+        }],
+    })
+    # Se envuelve en un solo "attachment" (mecanismo clásico de Slack) para que aparezca la
+    # franja de color a la izquierda — Block Kit por sí solo no permite ese acento de color.
+    return [{"color": color, "blocks": blocks}]
 
 
 def _vista_paso1():
@@ -161,10 +225,13 @@ def recibir_datos_caso(ack, body, client):
             print(f"⚠️ [caso-mercadeo] No se pudo avisar al supervisor del fallo de guardado: {e}")
 
     if guardado_ok and CANAL_CASOS_MERCADEO:
+        texto_plano = (f"📋 Nuevo caso {categoria} ({etiqueta}) reportado por {nombre_agente}. "
+                        + " | ".join(f"{e}: {v}" for _c, e, v in _campos_llenados(categoria, datos)))
         try:
             client.chat_postMessage(
                 channel=CANAL_CASOS_MERCADEO,
-                text=f"📋 Nuevo caso *{categoria}* ({etiqueta}) reportado por {nombre_agente}.",
+                text=texto_plano,  # fallback de texto plano (notificaciones, accesibilidad)
+                attachments=_tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos),
             )
         except Exception as e:
             print(f"⚠️ [caso-mercadeo] No se pudo publicar en el canal de casos: {e}")
