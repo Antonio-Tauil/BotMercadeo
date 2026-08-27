@@ -49,24 +49,11 @@ CATEGORIAS = [
     "Otros",
 ]
 
-# 'Otros' no tiene etiqueta fija: el agente elige manualmente entre las 4 (ver formularios_casos.py)
-ETIQUETA_POR_CATEGORIA = {
-    "Acceso": "Acceso y registro",
-    "Registro": "Acceso y registro",
-    "Carga de Documentos": "Carga de Doc's / Envío de contratos",
-    "Envío de Contrato": "Carga de Doc's / Envío de contratos",
-    "Conciliación": "Conciliación y Liquidación",
-    "Liquidación": "Conciliación y Liquidación",
-    "FAQ": "FAQ",
-    "Baja de Nivel": "FAQ",
-}
-
-ETIQUETAS_MANUALES = [
-    "Acceso y registro",
-    "Carga de Doc's / Envío de contratos",
-    "Conciliación y Liquidación",
-    "FAQ",
-]
+# Cada pestaña del Sheet tiene su PROPIA etiqueta — ya no se agrupan varias categorías bajo
+# una misma etiqueta compartida (a diferencia del mapeo original de comisión, sección 7.3 del
+# documento). Como cada categoría ya vive en su propia pestaña, su etiqueta es simplemente su
+# propio nombre — no hace falta que el agente elija nada manualmente (ni siquiera en "Otros").
+ETIQUETA_POR_CATEGORIA = {c: c for c in CATEGORIAS}
 
 ESTADOS_CASO = ["Abierto", "En espera", "Sin respuesta", "Cerrado", "Finalizado"]
 # ============ FIN CATEGORÍAS ============
