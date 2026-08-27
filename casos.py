@@ -14,8 +14,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from config import (
-    app, CATEGORIAS, ETIQUETA_POR_CATEGORIA, ESTADOS_CASO,
-    abrir_pestana_casos, nombre_real_del_agente, CANAL_CASOS_MERCADEO,
+    app, CATEGORIAS, ETIQUETA_POR_CATEGORIA, ESTADOS_CASO, pestana_de_categoria,
+    abrir_pestana_casos, nombre_real_del_agente, CANAL_CASOS_MERCADEO, ASTRID_SLACK_ID,
 )
 from formularios_casos import construir_blocks_formulario, specs_validacion
 from validaciones import _guardar_fila_por_encabezado, _VALIDADORES
@@ -125,12 +125,17 @@ def recibir_datos_caso(ack, body, client):
         "Fecha actualizacion": ahora.strftime("%d/%m/%Y %H:%M"),
     }
 
+    pestana = pestana_de_categoria(categoria)
+
     try:
-        ws = abrir_pestana_casos()
+        ws = abrir_pestana_casos(pestana)
         _guardar_fila_por_encabezado(ws, fila)
         guardado_ok = True
+        # Log de confirmación en cada guardado exitoso (mismo patrón que Robotín: no solo se
+        # avisa por Slack, también queda un rastro en los logs de Railway para depurar).
+        print(f"✅ [caso-mercadeo] Guardado en hoja '{pestana}' (categoría={categoria}, agente={nombre_agente}).")
     except Exception as e:
-        print(f"⚠️ [caso-mercadeo] Error guardando en Sheets: {e}")
+        print(f"⚠️ [caso-mercadeo] Error guardando en Sheets (pestaña='{pestana}'): {e}")
         guardado_ok = False
 
     if guardado_ok:
@@ -142,6 +147,18 @@ def recibir_datos_caso(ack, body, client):
         client.chat_postMessage(channel=usuario_id, text=texto)
     except Exception as e:
         print(f"⚠️ [caso-mercadeo] No se pudo avisar por DM al agente {usuario_id}: {e}")
+
+    # Blindaje de "guardado fantasma" (mismo que agregamos en Robotín): si el guardado falla,
+    # que no dependa solo de que el agente avise a mano — se le avisa también al supervisor.
+    if not guardado_ok and ASTRID_SLACK_ID:
+        try:
+            client.chat_postMessage(
+                channel=ASTRID_SLACK_ID,
+                text=(f"🔴 *BotMercadeo: un caso de {categoria} NO se pudo guardar en Sheets* "
+                      f"(agente: {nombre_agente}). Revisa los logs de Railway y regístralo a mano si hace falta."),
+            )
+        except Exception as e:
+            print(f"⚠️ [caso-mercadeo] No se pudo avisar al supervisor del fallo de guardado: {e}")
 
     if guardado_ok and CANAL_CASOS_MERCADEO:
         try:
