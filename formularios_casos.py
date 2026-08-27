@@ -50,28 +50,17 @@ def _bloque_input(block_id, label, multilinea):
 
 
 def construir_blocks_formulario(categoria):
-    """Arma los blocks del modal (paso 2) para la categoría dada, según FORM_SPECS."""
+    """Arma los blocks del modal (paso 2) para la categoría dada, según FORM_SPECS.
+
+    Cada categoría (incluida 'Otros') ya tiene su propia etiqueta fija, mapeada 1:1 en
+    config.ETIQUETA_POR_CATEGORIA — el agente ya no elige ninguna etiqueta a mano.
+    """
     blocks = []
     for clave, etiqueta, _validador, multilinea in FORM_SPECS[categoria]:
         blocks.append(_bloque_input(clave, etiqueta, multilinea))
-    if categoria == "Otros":
-        from config import ETIQUETAS_MANUALES
-        blocks.append({
-            "type": "input",
-            "block_id": "Etiqueta",
-            "label": {"type": "plain_text", "text": "¿Cuál de estas 4 categorías se parece más a este caso?"},
-            "element": {
-                "type": "static_select",
-                "action_id": "valor",
-                "options": [{"text": {"type": "plain_text", "text": e}, "value": e} for e in ETIQUETAS_MANUALES],
-            },
-        })
     return blocks
 
 
 def specs_validacion(categoria):
     """Lista [(block_id, tipo_validador), ...] para pasar a la validación genérica."""
-    specs = [(clave, validador) for clave, _e, validador, _m in FORM_SPECS[categoria]]
-    if categoria == "Otros":
-        specs.append(("Etiqueta", "requerido"))
-    return specs
+    return [(clave, validador) for clave, _e, validador, _m in FORM_SPECS[categoria]]
