@@ -22,14 +22,16 @@ app = App(token=os.environ["SLACK_BOT_TOKEN"], listener_executor=ThreadPoolExecu
 # ID del Sheet donde se registra cada caso reportado desde Slack (Componente 5 del documento).
 # Poner el ID real del Sheet en la variable de entorno SHEET_ID_CASOS_MERCADEO en Railway.
 SHEET_ID_CASOS_MERCADEO = os.environ.get("SHEET_ID_CASOS_MERCADEO", "")
-PESTANA_CASOS = os.environ.get("PESTANA_CASOS_MERCADEO", "Casos")
 
 # Canal donde se publica un resumen de cada caso nuevo (opcional — dejar vacío para no publicar).
 CANAL_CASOS_MERCADEO = os.environ.get("CANAL_CASOS_MERCADEO", "")
 
 # ID de Slack de Astrid (rol de supervisión — dashboard de ganancias, sección 5.3 y 9.2 del
-# documento). Se usa más adelante si el bot necesita avisarle algo directamente por Slack.
-# Poner su ID real cuando se tenga (se obtiene con /listar-ids una vez instalado el bot).
+# documento). Igual que con Robotín y el "aviso de guardado fantasma": si un caso se pierde
+# al guardarlo, se le avisa aquí además de al agente que lo reportó, para que nunca quede un
+# caso perdido sin que nadie se entere. Poner su ID real cuando se tenga (se obtiene con
+# /listar-ids una vez instalado el bot) — si se deja vacío, simplemente no se le avisa a nadie
+# más aparte del agente.
 ASTRID_SLACK_ID = os.environ.get("ASTRID_SLACK_ID", "")
 # ============ FIN CONFIGURACIÓN GENERAL ============
 
@@ -70,6 +72,31 @@ ESTADOS_CASO = ["Abierto", "En espera", "Sin respuesta", "Cerrado", "Finalizado"
 # ============ FIN CATEGORÍAS ============
 
 
+# ============ UNA PESTAÑA DE SHEETS POR CADA UNO DE LOS 9 FORMULARIOS (tabla 7.2 del documento) ============
+# Cada categoría tiene su propia pestaña, con exactamente sus columnas — así ninguna fila
+# queda con espacios en blanco (a diferencia de agrupar por etiqueta, donde categorías con
+# campos distintos comparten pestaña). Los NOMBRES DE PESTAÑA van sin tildes a propósito
+# (menos margen de error al crearlas/escribirlas a mano en Sheets); las categorías que se ven
+# en Slack sí conservan sus tildes normales — este diccionario es el único lugar que traduce
+# de una a otra, para no tener que desalinear nada más si cambia.
+CATEGORIA_A_PESTANA = {
+    "Conciliación": "Conciliacion",
+    "Liquidación": "Liquidacion",
+    "Carga de Documentos": "Carga de Documentos",
+    "Envío de Contrato": "Envio de Contrato",
+    "Acceso": "Acceso",
+    "Registro": "Registro",
+    "FAQ": "FAQ",
+    "Baja de Nivel": "Baja de Nivel",
+    "Otros": "Otros",
+}
+
+
+def pestana_de_categoria(categoria):
+    return CATEGORIA_A_PESTANA.get(categoria, categoria)
+# ============ FIN PESTAÑA POR CATEGORÍA ============
+
+
 # ============ CONEXIÓN COMPARTIDA A GOOGLE SHEETS ============
 # Reutiliza el mismo patrón de Robotín: una sola conexión cacheada en memoria en vez de
 # reconectar en cada llamada (la parte lenta de hablar con Sheets es autenticarse, no leer/escribir).
@@ -89,14 +116,14 @@ def get_cliente_sheets():
     return _CLIENTE_SHEETS_CACHEADO
 
 
-def abrir_pestana_casos():
-    """Abre (con caché en memoria) la pestaña donde se registran los casos."""
-    clave = (SHEET_ID_CASOS_MERCADEO, PESTANA_CASOS)
+def abrir_pestana_casos(nombre_pestana):
+    """Abre (con caché en memoria) la pestaña donde se registran los casos de una etiqueta."""
+    clave = (SHEET_ID_CASOS_MERCADEO, nombre_pestana)
     if clave in _PESTANAS_CACHEADAS:
         return _PESTANAS_CACHEADAS[clave]
     cliente = get_cliente_sheets()
     hoja = cliente.open_by_key(SHEET_ID_CASOS_MERCADEO)
-    ws = hoja.worksheet(PESTANA_CASOS)
+    ws = hoja.worksheet(nombre_pestana)
     _PESTANAS_CACHEADAS[clave] = ws
     return ws
 # ============ FIN CONEXIÓN A GOOGLE SHEETS ============
