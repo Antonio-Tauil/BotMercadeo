@@ -10,14 +10,19 @@ categoría; al enviarla, Slack permite reemplazar esa misma ventana por una segu
 falta un comando distinto por cada uno de los 9 tipos de caso.
 """
 import json
+import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from config import (
     app, CATEGORIAS, ETIQUETA_POR_CATEGORIA, ESTADOS_CASO, pestana_de_categoria,
     abrir_pestana_casos, nombre_real_del_agente, CANAL_CASOS_MERCADEO, ASTRID_SLACK_ID,
+    SLACK_BOT_TOKEN,
 )
-from formularios_casos import construir_blocks_formulario, specs_validacion, FORM_SPECS
+from formularios_casos import (
+    construir_blocks_formulario, specs_validacion, FORM_SPECS,
+    CATEGORIAS_CON_DOCUMENTO, ARCHIVO_BLOCK_ID,
+)
 from validaciones import _guardar_fila_por_encabezado, _VALIDADORES
 
 
@@ -64,10 +69,41 @@ def _resumen_datos_formulario(categoria, datos):
     return [f"*{etiqueta}:* {valor}" for _clave, etiqueta, valor in _campos_llenados(categoria, datos)]
 
 
-def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos):
+def _compartir_documento_en_canal(client, archivo, categoria, nombre_agente):
+    """El archivo que el agente adjunta en el modal (bloque 'file_input') nace PRIVADO —
+    solo la app puede verlo, nadie más en el equipo. Para que quede accesible para quien
+    revise el caso, se descarga ese archivo y se vuelve a subir directo al canal de casos;
+    el link resultante (permalink) es el que se guarda en el Sheet.
+
+    Si algo falla aquí (por ejemplo, si a la app le faltan los scopes 'files:read' /
+    'files:write'), no debe tumbar el guardado del caso — solo se pierde el link y queda
+    un aviso en los logs de Railway para revisarlo a mano."""
+    if not CANAL_CASOS_MERCADEO:
+        return ""
+    try:
+        resp = requests.get(
+            archivo["url_private_download"],
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        subida = client.files_upload_v2(
+            channel=CANAL_CASOS_MERCADEO,
+            filename=archivo.get("name", "documento"),
+            content=resp.content,
+            title=f"{categoria} — {nombre_agente}",
+        )
+        return subida["file"]["permalink"]
+    except Exception as e:
+        print(f"⚠️ [caso-mercadeo] No se pudo republicar el documento adjunto en el canal: {e}")
+        return ""
+
+
+def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, link_documento=""):
     """Arma el mensaje tipo 'ticket' para el canal: una franja de color por categoría
     (usando el color lateral de los 'attachments' de Slack) + una lista vertical de campos
-    con ícono + un pie con la etiqueta, quién reportó el caso y cuándo."""
+    con ícono + un pie con la etiqueta, quién reportó el caso y cuándo (+ link al documento
+    adjunto, si la categoría lo trae)."""
     campos = _campos_llenados(categoria, datos)
     circulo, color = CIRCULO_Y_COLOR_CATEGORIA.get(categoria, ("⚪", "#8E8E93"))
 
@@ -77,13 +113,10 @@ def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos):
     if campos:
         lineas = [f"{ICONO_CAMPO.get(clave, '•')} *{etq}:* {val}" for clave, etq, val in campos]
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lineas)}})
-    blocks.append({
-        "type": "context",
-        "elements": [{
-            "type": "mrkdwn",
-            "text": f"🏷️ *{etiqueta}*   ·   🙋 Reportado por *{nombre_agente}*   ·   🕒 {ahora.strftime('%d/%m/%Y %H:%M')}",
-        }],
-    })
+    pie = f"🏷️ *{etiqueta}*   ·   🙋 Reportado por *{nombre_agente}*   ·   🕒 {ahora.strftime('%d/%m/%Y %H:%M')}"
+    if link_documento:
+        pie += f"   ·   📎 <{link_documento}|Ver documento>"
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": pie}]})
     # Se envuelve en un solo "attachment" (mecanismo clásico de Slack) para que aparezca la
     # franja de color a la izquierda — Block Kit por sí solo no permite ese acento de color.
     return [{"color": color, "blocks": blocks}]
@@ -158,6 +191,17 @@ def recibir_datos_caso(ack, body, client):
         ok, msg = _VALIDADORES[tipo](valor)
         if not ok:
             errores[block_id] = msg
+
+    # El campo de archivo ('file_input') no pasa por _VALIDADORES: trae 'files' en vez de
+    # 'value'/'selected_option'. Se valida aparte que haya al menos un archivo adjunto.
+    archivo = None
+    if categoria in CATEGORIAS_CON_DOCUMENTO:
+        archivos = valores.get(ARCHIVO_BLOCK_ID, {}).get("valor", {}).get("files") or []
+        if not archivos:
+            errores[ARCHIVO_BLOCK_ID] = "Debes adjuntar el documento antes de enviar el caso."
+        else:
+            archivo = archivos[0]
+
     if errores:
         ack({"response_action": "errors", "errors": errores})
         return
@@ -178,6 +222,10 @@ def recibir_datos_caso(ack, body, client):
     nombre_agente = nombre_real_del_agente(client, usuario_id)
     ahora = datetime.now(ZoneInfo("America/Caracas"))
 
+    link_documento = ""
+    if archivo:
+        link_documento = _compartir_documento_en_canal(client, archivo, categoria, nombre_agente)
+
     fila = {
         "Categoria": categoria,
         "Etiqueta": etiqueta,
@@ -188,6 +236,12 @@ def recibir_datos_caso(ack, body, client):
         "Fecha alta": ahora.strftime("%d/%m/%Y %H:%M"),
         "Fecha actualizacion": ahora.strftime("%d/%m/%Y %H:%M"),
     }
+    # OJO: solo se agrega esta clave para las categorías que SÍ tienen columna "Documento
+    # adjunto" en su pestaña — si se agregara siempre, en las otras 7 pestañas (que no tienen
+    # esa columna) quedaría desalineada al final de la fila (el mismo bug que ya tuvimos con
+    # los encabezados mal escritos a mano).
+    if categoria in CATEGORIAS_CON_DOCUMENTO:
+        fila["Documento adjunto"] = link_documento
 
     pestana = pestana_de_categoria(categoria)
 
@@ -231,7 +285,7 @@ def recibir_datos_caso(ack, body, client):
             client.chat_postMessage(
                 channel=CANAL_CASOS_MERCADEO,
                 text=texto_plano,  # fallback de texto plano (notificaciones, accesibilidad)
-                attachments=_tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos),
+                attachments=_tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, link_documento),
             )
         except Exception as e:
             print(f"⚠️ [caso-mercadeo] No se pudo publicar en el canal de casos: {e}")
