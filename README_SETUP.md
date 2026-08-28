@@ -69,6 +69,27 @@ cualquier canal o DM con el bot. Antes de las pruebas del viernes, correr tambi�
 `python3 test_bot_mercadeo.py` (no necesita credenciales reales) para confirmar que la lógica
 sigue intacta después de cualquier ajuste de último momento.
 
+## Adjuntar documentos (Carga de Documentos y Envío de Contrato)
+
+Estas dos categorías traen un campo para adjuntar un archivo (pdf, jpg, png, doc, docx) directo
+en el modal de Slack. El archivo que el agente adjunta nace PRIVADO (solo la app lo ve) — el bot
+lo descarga y lo vuelve a publicar en `CANAL_CASOS_MERCADEO` para que quede con un link visible
+para todo el equipo, y ese link es el que se guarda en la columna **"Documento adjunto"** del Sheet.
+
+Para que esto funcione hace falta:
+1. **Agregar 2 scopes nuevos a la app de Slack**: en https://api.slack.com/apps → tu app
+   BotMercadeo → "OAuth & Permissions" → "Bot Token Scopes" → agregar `files:read` y `files:write`.
+2. **Reinstalar la app** en el workspace (el mismo panel te lo pide con un botón "Reinstall to
+   Workspace" en cuanto agregas un scope nuevo). Esto puede generar un `SLACK_BOT_TOKEN` distinto —
+   si cambia, hay que actualizarlo en Railway.
+3. **Agregar la columna "Documento adjunto"** en la primera fila de las pestañas "Carga de
+   Documentos" y "Envío de Contrato" del Sheet (en las otras 7 pestañas NO hace falta esa columna).
+4. Instalar la nueva dependencia: `requests` ya está en `requirements.txt` — Railway la instala
+   sola en el próximo deploy.
+
+Si algo de esto falta (scope, columna, etc.), el caso se sigue guardando igual — solo se pierde el
+link del documento y queda un aviso `⚠️` en los logs de Railway para revisarlo a mano.
+
 ## Nota sobre los agentes
 
 No hace falta una lista de nombres de agentes para que esto funcione: el bot consulta el nombre
