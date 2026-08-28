@@ -15,6 +15,12 @@ TELEFONO = ("Telefono", "Número de teléfono", "telefono", False)
 CORREO = ("Correo", "Correo electrónico", "correo", False)
 DESCRIPCION = ("Descripcion", "Descripción", "requerido", True)
 
+# Categorías donde el agente debe adjuntar un documento (foto/PDF/Word) desde el modal de
+# Slack — ver ARCHIVO_BLOCK_ID y construir_blocks_formulario() más abajo.
+CATEGORIAS_CON_DOCUMENTO = {"Carga de Documentos", "Envío de Contrato"}
+ARCHIVO_BLOCK_ID = "Documento"
+TIPOS_DE_ARCHIVO_PERMITIDOS = ["pdf", "jpg", "jpeg", "png", "doc", "docx"]
+
 FORM_SPECS = {
     "Conciliación": [
         NOMBRE, CEDULA, EMPRESA, TELEFONO,
@@ -49,6 +55,23 @@ def _bloque_input(block_id, label, multilinea):
     }
 
 
+def _bloque_archivo():
+    """Campo de tipo 'file_input': agrega al modal el botón nativo de Slack para adjuntar
+    un archivo (arrastrar o seleccionar) antes de enviar el caso. Requiere que la app tenga
+    los scopes 'files:read' y 'files:write' (ver README_SETUP.md)."""
+    return {
+        "type": "input",
+        "block_id": ARCHIVO_BLOCK_ID,
+        "label": {"type": "plain_text", "text": "Documento adjunto"},
+        "element": {
+            "type": "file_input",
+            "action_id": "valor",
+            "filetypes": TIPOS_DE_ARCHIVO_PERMITIDOS,
+            "max_files": 1,
+        },
+    }
+
+
 def construir_blocks_formulario(categoria):
     """Arma los blocks del modal (paso 2) para la categoría dada, según FORM_SPECS.
 
@@ -58,6 +81,8 @@ def construir_blocks_formulario(categoria):
     blocks = []
     for clave, etiqueta, _validador, multilinea in FORM_SPECS[categoria]:
         blocks.append(_bloque_input(clave, etiqueta, multilinea))
+    if categoria in CATEGORIAS_CON_DOCUMENTO:
+        blocks.append(_bloque_archivo())
     return blocks
 
 
