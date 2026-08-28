@@ -16,7 +16,11 @@ import gspread
 # Mismo motivo que en Robotín: más hilos disponibles = menos riesgo de que un comando quede
 # esperando turno más de los ~3 segundos que Slack da para usar un 'trigger_id' antes de que
 # se venza (lo que haría fallar la apertura del modal).
-app = App(token=os.environ["SLACK_BOT_TOKEN"], listener_executor=ThreadPoolExecutor(max_workers=30))
+# Se guarda aparte (además de pasárselo a App) porque casos.py lo necesita para descargar
+# por su cuenta los documentos que el agente adjunta en el modal (ver ARCHIVO_BLOCK_ID en
+# formularios_casos.py) — esa descarga se hace con una llamada HTTP directa, no por slack_bolt.
+SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
+app = App(token=SLACK_BOT_TOKEN, listener_executor=ThreadPoolExecutor(max_workers=30))
 
 # ============ CONFIGURACIÓN GENERAL ============
 # ID del Sheet donde se registra cada caso reportado desde Slack (Componente 5 del documento).
