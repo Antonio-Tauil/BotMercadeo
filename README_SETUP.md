@@ -18,9 +18,7 @@ Un solo comando, `/caso-mercadeo`, que:
 5. Avisa al agente por DM si el caso se guardó bien o si hubo un error técnico guardándolo (para
    que nunca se pierda un caso sin que nadie se entere).
 
-Lo que queda para una fase 2 (no bloquea las pruebas del viernes): el cambio de estatus de un
-caso ya registrado directamente desde Slack (sección 7.4 del documento la deja como algo "a
-evaluar"), y el comando de resumen personal por agente.
+Lo que queda para una fase 2: el comando de resumen personal por agente.
 
 ## Pasos para dejarlo funcionando
 
@@ -95,6 +93,38 @@ Para que esto funcione hace falta:
 
 Si algo de esto falta (scope, columna, etc.), el caso se sigue guardando igual — solo se pierde el
 link del documento y queda un aviso `⚠️` en los logs de Railway para revisarlo a mano.
+
+## Cambiar el estado del caso desde Slack (botones en la tarjeta)
+
+Cada tarjeta en el canal ahora trae, debajo del pie, botones para cambiar el estado del caso:
+**🟡 En espera**, **🟠 Sin respuesta**, **✅ Cerrado**, **🏁 Finalizado** (no hay botón para volver
+a "Abierto" porque ese ya es el estado inicial de todo caso nuevo). Cualquier persona que vea el
+mensaje puede darle clic — no hace falta escribir ningún comando ni ir al Sheet a buscar la fila.
+
+Al hacer clic:
+1. El bot busca la fila del caso en la pestaña correspondiente (usando la columna nueva **"ID
+   caso"** — ver más abajo) y actualiza ahí mismo su "Estado" y su "Fecha actualizacion".
+2. Publica una confirmación como respuesta en el mismo hilo del mensaje original (por ejemplo:
+   "🔁 Estado del caso `FQ-280826-142233` actualizado a *Cerrado* por Antonio") — así queda un
+   historial de quién cambió qué y cuándo, sin tener que reconstruir toda la tarjeta.
+3. Los botones se quedan activos después de usarlos, para poder seguir moviendo el caso por sus
+   distintos estados con el tiempo (por ejemplo: Abierto → En espera → Cerrado).
+
+**El "ID de caso"**: cada caso nuevo ahora se guarda con un identificador único (por ejemplo
+`CD-280826-142233` — el prefijo indica la categoría y el resto es la fecha/hora exacta de
+creación). Es lo que usa el botón para saber "actualiza ESTA fila y no otra". Esto significa que
+hay que:
+
+1. **Agregar la columna "ID caso"** en la primera fila de **las 9 pestañas** del Sheet (a
+   diferencia de "Documento adjunto", que solo iba en 2 pestañas, esta va en todas — cualquier
+   categoría puede necesitar cambiar de estado). El orden de la columna no importa, el bot la
+   busca por nombre — igual que las demás.
+2. No hace falta tocar nada más en Slack (los botones usan `chat:write`, que la app ya tiene) ni
+   reinstalar la app.
+
+Si a alguna pestaña le falta la columna "ID caso" (por ejemplo, mientras la vas agregando una por
+una), el botón no rompe nada — solo responde en el hilo con un aviso `⚠️` explicando que falta esa
+columna, para que se agregue y se intente de nuevo.
 
 ## Nota sobre los agentes
 
