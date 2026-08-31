@@ -10,6 +10,7 @@ categoría; al enviarla, Slack permite reemplazar esa misma ventana por una segu
 falta un comando distinto por cada uno de los 9 tipos de caso.
 """
 import json
+import re
 import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -26,10 +27,14 @@ from formularios_casos import (
 from validaciones import _guardar_fila_por_encabezado, _actualizar_fila_por_id, _VALIDADORES
 
 
-# Acción de Slack (action_id) que llevan TODOS los botones de cambio de estado en la tarjeta
-# — se usa el mismo para los 4, y el propio botón lleva en su 'value' cuál caso y a qué
-# estado hay que pasar (ver _bloque_botones_estado).
+# Prefijo del action_id de los botones de cambio de estado en la tarjeta. Slack EXIGE que
+# cada botón dentro de un mismo bloque tenga un action_id distinto (si se repite, rechaza el
+# mensaje entero con 'invalid_attachments' — esto fue justo lo que falló en la primera
+# prueba), así que cada botón lleva "cambiar_estado_caso__<n>" y el propio botón lleva en su
+# 'value' cuál caso y a qué estado hay que pasar (ver _bloque_botones_estado). El handler se
+# registra con un patrón que agarra a los 5 por igual.
 ACTION_CAMBIAR_ESTADO = "cambiar_estado_caso"
+PATRON_ACTION_CAMBIAR_ESTADO = re.compile(rf"^{ACTION_CAMBIAR_ESTADO}__\d+$")
 
 # Se incluye también "Abierto" (aunque sea el estado inicial de todo caso nuevo) para poder
 # reabrir un caso que se cerró o finalizó por error, sin tener que ir al Sheet a mano.
@@ -124,11 +129,11 @@ def _bloque_botones_estado(id_caso):
         "elements": [
             {
                 "type": "button",
-                "action_id": ACTION_CAMBIAR_ESTADO,
+                "action_id": f"{ACTION_CAMBIAR_ESTADO}__{i}",
                 "text": {"type": "plain_text", "text": f"{EMOJI_ESTADO.get(estado, '')} {estado}".strip()},
                 "value": json.dumps({"id_caso": id_caso, "nuevo_estado": estado}),
             }
-            for estado in ESTADOS_CON_BOTON
+            for i, estado in enumerate(ESTADOS_CON_BOTON)
         ],
     }
 
@@ -337,7 +342,7 @@ def recibir_datos_caso(ack, body, client):
             print(f"⚠️ [caso-mercadeo] No se pudo publicar en el canal de casos: {e}")
 
 
-@app.action(ACTION_CAMBIAR_ESTADO)
+@app.action(PATRON_ACTION_CAMBIAR_ESTADO)
 def actualizar_estado_caso(ack, body, client):
     """Se dispara cuando cualquier agente le da clic a uno de los botones de estado en la
     tarjeta del canal. Los botones quedan siempre activos (no se deshabilitan tras usarlos)
