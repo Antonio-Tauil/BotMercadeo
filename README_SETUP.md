@@ -71,10 +71,16 @@ sigue intacta después de cualquier ajuste de último momento.
 
 ## Adjuntar documentos (Carga de Documentos y Envío de Contrato)
 
-Estas dos categorías traen un campo para adjuntar un archivo (pdf, jpg, png, doc, docx) directo
-en el modal de Slack. El archivo que el agente adjunta nace PRIVADO (solo la app lo ve) — el bot
-lo descarga y lo vuelve a publicar en `CANAL_CASOS_MERCADEO` para que quede con un link visible
-para todo el equipo, y ese link es el que se guarda en la columna **"Documento adjunto"** del Sheet.
+Estas dos categorías traen un campo para adjuntar **hasta 5 archivos a la vez** (pdf, jpg, png,
+doc, docx) directo en el modal de Slack (el mismo botón deja arrastrar o seleccionar varios de
+una sola vez — el límite se ajusta en `MAX_ARCHIVOS_POR_CASO` en `formularios_casos.py`). Los
+archivos nacen PRIVADOS (solo la app los ve) — el bot descarga cada uno y los vuelve a publicar
+en `CANAL_CASOS_MERCADEO` para que queden con un link visible para todo el equipo, y esos links
+(uno por línea) son los que se guardan en la columna **"Documento adjunto"** del Sheet. Si alguno
+falla al republicarse, los demás igual quedan guardados normalmente.
+
+Sugerencia: en la columna "Documento adjunto" del Sheet, activa "Ajustar texto" (Formato > Ajuste
+de texto > Ajustar) para que se vean todos los links cuando un caso trae más de uno.
 
 Para que esto funcione hace falta:
 1. **Agregar 2 scopes nuevos a la app de Slack**: en https://api.slack.com/apps → tu app
