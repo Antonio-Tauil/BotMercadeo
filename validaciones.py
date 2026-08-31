@@ -44,6 +44,30 @@ def _columna_por_nombre(ws, nombre):
     if objetivo in encabezados:
         return encabezados.index(objetivo) + 1
     return None
+
+
+def _actualizar_fila_por_id(ws, columna_id, valor_id, cambios):
+    """
+    Busca la fila donde la columna 'columna_id' tiene el valor 'valor_id' (por ejemplo,
+    columna_id='ID caso', valor_id='CD-280826-142233') y actualiza, por NOMBRE de columna,
+    cada par en 'cambios' ({nombre_de_columna: nuevo_valor}) — usado para cambiar el Estado
+    de un caso ya guardado desde los botones de Slack, sin tocar el resto de la fila.
+
+    Lanza ValueError si la columna_id no existe en la pestaña o si no se encuentra ningún
+    caso con ese valor — así el llamador puede avisar del error en vez de fallar en silencio.
+    """
+    col_id = _columna_por_nombre(ws, columna_id)
+    if col_id is None:
+        raise ValueError(f"La pestaña no tiene una columna '{columna_id}'.")
+    valores_columna = _con_reintento(lambda: ws.col_values(col_id))
+    try:
+        fila_idx = valores_columna.index(valor_id) + 1  # ya viene con el encabezado incluido
+    except ValueError:
+        raise ValueError(f"No se encontró ningún caso con {columna_id}='{valor_id}'.")
+    for nombre_columna, nuevo_valor in cambios.items():
+        col = _columna_por_nombre(ws, nombre_columna)
+        if col is not None:
+            _con_reintento(lambda c=col, v=nuevo_valor: ws.update_cell(fila_idx, c, v))
 # ============ FIN GUARDAR POR NOMBRE DE COLUMNA ============
 
 
