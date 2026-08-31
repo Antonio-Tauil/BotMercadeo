@@ -88,6 +88,39 @@ def pestana_de_categoria(categoria):
 # ============ FIN PESTAÑA POR CATEGORÍA ============
 
 
+# ============ ID DE CASO (para poder cambiar su estado después desde Slack) ============
+# Cada caso guardado necesita un identificador único para poder decirle luego al bot "cambia
+# el estado DE ESTE caso" (con los botones de la tarjeta) sin tener que ir a buscar la fila a
+# mano en el Sheet. El ID lleva el prefijo de la categoría + fecha y hora exacta de creación
+# (ej: "CD-280826-142233"), así no hace falta leer todo el Sheet para calcular un correlativo
+# — y el prefijo permite reconocer a qué pestaña pertenece un caso solo con ver su ID.
+PREFIJO_ID_CASO = {
+    "Conciliación": "CN",
+    "Liquidación": "LQ",
+    "Carga de Documentos": "CD",
+    "Envío de Contrato": "EC",
+    "Acceso": "AC",
+    "Registro": "RG",
+    "FAQ": "FQ",
+    "Baja de Nivel": "BN",
+    "Otros": "OT",
+}
+CATEGORIA_DE_PREFIJO = {prefijo: categoria for categoria, prefijo in PREFIJO_ID_CASO.items()}
+
+
+def generar_id_caso(categoria, ahora):
+    prefijo = PREFIJO_ID_CASO.get(categoria, "XX")
+    return f"{prefijo}-{ahora.strftime('%d%m%y-%H%M%S')}"
+
+
+def categoria_de_id_caso(id_caso):
+    """A partir de un ID como 'CD-280826-142233', reconstruye a qué categoría pertenece
+    (y por lo tanto en qué pestaña del Sheet hay que buscarlo) leyendo su prefijo."""
+    prefijo = str(id_caso or "").split("-")[0]
+    return CATEGORIA_DE_PREFIJO.get(prefijo)
+# ============ FIN ID DE CASO ============
+
+
 # ============ CONEXIÓN COMPARTIDA A GOOGLE SHEETS ============
 # Reutiliza el mismo patrón de Robotín: una sola conexión cacheada en memoria en vez de
 # reconectar en cada llamada (la parte lenta de hablar con Sheets es autenticarse, no leer/escribir).
