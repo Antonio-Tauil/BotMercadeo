@@ -99,11 +99,11 @@ def _compartir_documento_en_canal(client, archivo, categoria, nombre_agente):
         return ""
 
 
-def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, link_documento=""):
+def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, links_documentos=None):
     """Arma el mensaje tipo 'ticket' para el canal: una franja de color por categoría
     (usando el color lateral de los 'attachments' de Slack) + una lista vertical de campos
-    con ícono + un pie con la etiqueta, quién reportó el caso y cuándo (+ link al documento
-    adjunto, si la categoría lo trae)."""
+    con ícono + un pie con la etiqueta, quién reportó el caso y cuándo (+ un link por cada
+    documento adjunto, si la categoría los trae — puede ser más de uno)."""
     campos = _campos_llenados(categoria, datos)
     circulo, color = CIRCULO_Y_COLOR_CATEGORIA.get(categoria, ("⚪", "#8E8E93"))
 
@@ -114,8 +114,9 @@ def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, link_documen
         lineas = [f"{ICONO_CAMPO.get(clave, '•')} *{etq}:* {val}" for clave, etq, val in campos]
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lineas)}})
     pie = f"🏷️ *{etiqueta}*   ·   🙋 Reportado por *{nombre_agente}*   ·   🕒 {ahora.strftime('%d/%m/%Y %H:%M')}"
-    if link_documento:
-        pie += f"   ·   📎 <{link_documento}|Ver documento>"
+    for i, link in enumerate(links_documentos or [], start=1):
+        etiqueta_doc = "Ver documento" if len(links_documentos) == 1 else f"Ver documento {i}"
+        pie += f"   ·   📎 <{link}|{etiqueta_doc}>"
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": pie}]})
     # Se envuelve en un solo "attachment" (mecanismo clásico de Slack) para que aparezca la
     # franja de color a la izquierda — Block Kit por sí solo no permite ese acento de color.
@@ -193,14 +194,13 @@ def recibir_datos_caso(ack, body, client):
             errores[block_id] = msg
 
     # El campo de archivo ('file_input') no pasa por _VALIDADORES: trae 'files' en vez de
-    # 'value'/'selected_option'. Se valida aparte que haya al menos un archivo adjunto.
-    archivo = None
+    # 'value'/'selected_option'. Se valida aparte que haya al menos un archivo adjunto (Slack
+    # ya limita a MAX_ARCHIVOS_POR_CASO desde el propio modal, no hace falta validarlo aquí).
+    archivos = []
     if categoria in CATEGORIAS_CON_DOCUMENTO:
         archivos = valores.get(ARCHIVO_BLOCK_ID, {}).get("valor", {}).get("files") or []
         if not archivos:
-            errores[ARCHIVO_BLOCK_ID] = "Debes adjuntar el documento antes de enviar el caso."
-        else:
-            archivo = archivos[0]
+            errores[ARCHIVO_BLOCK_ID] = "Debes adjuntar al menos un documento antes de enviar el caso."
 
     if errores:
         ack({"response_action": "errors", "errors": errores})
@@ -222,9 +222,12 @@ def recibir_datos_caso(ack, body, client):
     nombre_agente = nombre_real_del_agente(client, usuario_id)
     ahora = datetime.now(ZoneInfo("America/Caracas"))
 
-    link_documento = ""
-    if archivo:
-        link_documento = _compartir_documento_en_canal(client, archivo, categoria, nombre_agente)
+    # Se republica cada archivo por separado en el canal — si alguno falla, los demás igual
+    # quedan guardados (no se pierde todo por un solo archivo problemático).
+    links_documentos = [
+        link for archivo in archivos
+        if (link := _compartir_documento_en_canal(client, archivo, categoria, nombre_agente))
+    ]
 
     fila = {
         "Categoria": categoria,
@@ -241,7 +244,9 @@ def recibir_datos_caso(ack, body, client):
     # esa columna) quedaría desalineada al final de la fila (el mismo bug que ya tuvimos con
     # los encabezados mal escritos a mano).
     if categoria in CATEGORIAS_CON_DOCUMENTO:
-        fila["Documento adjunto"] = link_documento
+        # Varios links en la misma celda, uno por línea (conviene activar "ajustar texto"
+        # en esta columna del Sheet para que se vean todos sin necesidad de expandir la fila).
+        fila["Documento adjunto"] = "\n".join(links_documentos)
 
     pestana = pestana_de_categoria(categoria)
 
@@ -285,7 +290,7 @@ def recibir_datos_caso(ack, body, client):
             client.chat_postMessage(
                 channel=CANAL_CASOS_MERCADEO,
                 text=texto_plano,  # fallback de texto plano (notificaciones, accesibilidad)
-                attachments=_tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, link_documento),
+                attachments=_tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, links_documentos),
             )
         except Exception as e:
             print(f"⚠️ [caso-mercadeo] No se pudo publicar en el canal de casos: {e}")
