@@ -17,13 +17,27 @@ from zoneinfo import ZoneInfo
 from config import (
     app, CATEGORIAS, ETIQUETA_POR_CATEGORIA, ESTADOS_CASO, pestana_de_categoria,
     abrir_pestana_casos, nombre_real_del_agente, CANAL_CASOS_MERCADEO, ASTRID_SLACK_ID,
-    SLACK_BOT_TOKEN,
+    SLACK_BOT_TOKEN, generar_id_caso, categoria_de_id_caso,
 )
 from formularios_casos import (
     construir_blocks_formulario, specs_validacion, FORM_SPECS,
     CATEGORIAS_CON_DOCUMENTO, ARCHIVO_BLOCK_ID,
 )
-from validaciones import _guardar_fila_por_encabezado, _VALIDADORES
+from validaciones import _guardar_fila_por_encabezado, _actualizar_fila_por_id, _VALIDADORES
+
+
+# Acción de Slack (action_id) que llevan TODOS los botones de cambio de estado en la tarjeta
+# — se usa el mismo para los 4, y el propio botón lleva en su 'value' cuál caso y a qué
+# estado hay que pasar (ver _bloque_botones_estado).
+ACTION_CAMBIAR_ESTADO = "cambiar_estado_caso"
+
+# No se pone un botón para volver a "Abierto": es el estado inicial de todo caso nuevo, así
+# que no hace falta un botón para "reabrirlo" en el mismo instante en que se crea.
+ESTADOS_CON_BOTON = [e for e in ESTADOS_CASO if e != "Abierto"]
+
+EMOJI_ESTADO = {
+    "Abierto": "🔵", "En espera": "🟡", "Sin respuesta": "🟠", "Cerrado": "✅", "Finalizado": "🏁",
+}
 
 
 CALLBACK_PASO1 = "caso_mercadeo_categoria"
@@ -99,11 +113,31 @@ def _compartir_documento_en_canal(client, archivo, categoria, nombre_agente):
         return ""
 
 
-def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, links_documentos=None):
+def _bloque_botones_estado(id_caso):
+    """Fila de botones (uno por cada estado al que se puede pasar) para que cambiar el
+    estado del caso sea un clic, sin tener que ir al Sheet ni escribir ningún comando. Cada
+    botón lleva en su 'value' el ID del caso + el estado destino, que es lo que lee
+    actualizar_estado_caso() al recibir el clic."""
+    return {
+        "type": "actions",
+        "block_id": f"estado_{id_caso}",
+        "elements": [
+            {
+                "type": "button",
+                "action_id": ACTION_CAMBIAR_ESTADO,
+                "text": {"type": "plain_text", "text": f"{EMOJI_ESTADO.get(estado, '')} {estado}".strip()},
+                "value": json.dumps({"id_caso": id_caso, "nuevo_estado": estado}),
+            }
+            for estado in ESTADOS_CON_BOTON
+        ],
+    }
+
+
+def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, links_documentos=None, id_caso=None):
     """Arma el mensaje tipo 'ticket' para el canal: una franja de color por categoría
     (usando el color lateral de los 'attachments' de Slack) + una lista vertical de campos
     con ícono + un pie con la etiqueta, quién reportó el caso y cuándo (+ un link por cada
-    documento adjunto, si la categoría los trae — puede ser más de uno)."""
+    documento adjunto, si la categoría los trae) + los botones para cambiar el estado."""
     campos = _campos_llenados(categoria, datos)
     circulo, color = CIRCULO_Y_COLOR_CATEGORIA.get(categoria, ("⚪", "#8E8E93"))
 
@@ -117,7 +151,11 @@ def _tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, links_docume
     for i, link in enumerate(links_documentos or [], start=1):
         etiqueta_doc = "Ver documento" if len(links_documentos) == 1 else f"Ver documento {i}"
         pie += f"   ·   📎 <{link}|{etiqueta_doc}>"
+    if id_caso:
+        pie += f"   ·   🔖 `{id_caso}`"
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": pie}]})
+    if id_caso:
+        blocks.append(_bloque_botones_estado(id_caso))
     # Se envuelve en un solo "attachment" (mecanismo clásico de Slack) para que aparezca la
     # franja de color a la izquierda — Block Kit por sí solo no permite ese acento de color.
     return [{"color": color, "blocks": blocks}]
@@ -229,6 +267,8 @@ def recibir_datos_caso(ack, body, client):
         if (link := _compartir_documento_en_canal(client, archivo, categoria, nombre_agente))
     ]
 
+    id_caso = generar_id_caso(categoria, ahora)
+
     fila = {
         "Categoria": categoria,
         "Etiqueta": etiqueta,
@@ -238,6 +278,7 @@ def recibir_datos_caso(ack, body, client):
         "Estado": ESTADOS_CASO[0],  # "Abierto"
         "Fecha alta": ahora.strftime("%d/%m/%Y %H:%M"),
         "Fecha actualizacion": ahora.strftime("%d/%m/%Y %H:%M"),
+        "ID caso": id_caso,
     }
     # OJO: solo se agrega esta clave para las categorías que SÍ tienen columna "Documento
     # adjunto" en su pestaña — si se agregara siempre, en las otras 7 pestañas (que no tienen
@@ -290,7 +331,60 @@ def recibir_datos_caso(ack, body, client):
             client.chat_postMessage(
                 channel=CANAL_CASOS_MERCADEO,
                 text=texto_plano,  # fallback de texto plano (notificaciones, accesibilidad)
-                attachments=_tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, links_documentos),
+                attachments=_tarjeta_caso(categoria, etiqueta, nombre_agente, ahora, datos, links_documentos, id_caso),
             )
         except Exception as e:
             print(f"⚠️ [caso-mercadeo] No se pudo publicar en el canal de casos: {e}")
+
+
+@app.action(ACTION_CAMBIAR_ESTADO)
+def actualizar_estado_caso(ack, body, client):
+    """Se dispara cuando cualquier agente le da clic a uno de los botones de estado en la
+    tarjeta del canal. Los botones quedan siempre activos (no se deshabilitan tras usarlos)
+    para poder ir moviendo el caso por sus distintos estados con el tiempo. La confirmación
+    (o el error) se publica como respuesta en el mismo hilo del mensaje, para dejar un
+    rastro de quién cambió qué y cuándo sin tener que reconstruir toda la tarjeta original."""
+    ack()
+    try:
+        valor = json.loads(body["actions"][0]["value"])
+        id_caso = valor["id_caso"]
+        nuevo_estado = valor["nuevo_estado"]
+    except Exception as e:
+        print(f"⚠️ [estado-caso] No se pudo leer el botón presionado: {e}")
+        return
+
+    categoria = categoria_de_id_caso(id_caso)
+    if not categoria:
+        print(f"⚠️ [estado-caso] No se reconoce a qué categoría pertenece el caso '{id_caso}'.")
+        return
+    pestana = pestana_de_categoria(categoria)
+
+    usuario_id = body["user"]["id"]
+    quien = nombre_real_del_agente(client, usuario_id)
+    ahora = datetime.now(ZoneInfo("America/Caracas"))
+
+    try:
+        ws = abrir_pestana_casos(pestana)
+        _actualizar_fila_por_id(ws, "ID caso", id_caso, {
+            "Estado": nuevo_estado,
+            "Fecha actualizacion": ahora.strftime("%d/%m/%Y %H:%M"),
+        })
+        ok = True
+        print(f"✅ [estado-caso] '{id_caso}' actualizado a '{nuevo_estado}' por {quien}.")
+    except Exception as e:
+        ok = False
+        print(f"⚠️ [estado-caso] No se pudo actualizar '{id_caso}' en Sheets: {e}")
+
+    if ok:
+        texto = f"🔁 Estado del caso `{id_caso}` actualizado a *{nuevo_estado}* por {quien}."
+    else:
+        texto = (f"⚠️ No se pudo actualizar el estado del caso `{id_caso}` en el Sheet — revisa "
+                 f"que la pestaña '{pestana}' tenga la columna 'ID caso' (agente: {quien}).")
+    try:
+        client.chat_postMessage(
+            channel=body["channel"]["id"],
+            thread_ts=body["message"]["ts"],
+            text=texto,
+        )
+    except Exception as e:
+        print(f"⚠️ [estado-caso] No se pudo publicar la confirmación en el hilo: {e}")
