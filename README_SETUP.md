@@ -96,10 +96,11 @@ link del documento y queda un aviso `⚠️` en los logs de Railway para revisar
 
 ## Cambiar el estado del caso desde Slack (botones en la tarjeta)
 
-Cada tarjeta en el canal ahora trae, debajo del pie, botones para cambiar el estado del caso:
-**🟡 En espera**, **🟠 Sin respuesta**, **✅ Cerrado**, **🏁 Finalizado** (no hay botón para volver
-a "Abierto" porque ese ya es el estado inicial de todo caso nuevo). Cualquier persona que vea el
-mensaje puede darle clic — no hace falta escribir ningún comando ni ir al Sheet a buscar la fila.
+Cada tarjeta en el canal ahora trae, debajo del pie, un botón por cada uno de los 5 estados:
+**🔵 Abierto**, **🟡 En espera**, **🟠 Sin respuesta**, **✅ Cerrado**, **🏁 Finalizado** (se incluye
+"Abierto" también, para poder reabrir un caso que se cerró o finalizó por error). Cualquier
+persona que vea el mensaje puede darle clic — no hace falta escribir ningún comando ni ir al
+Sheet a buscar la fila.
 
 Al hacer clic:
 1. El bot busca la fila del caso en la pestaña correspondiente (usando la columna nueva **"ID
