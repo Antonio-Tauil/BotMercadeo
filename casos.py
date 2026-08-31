@@ -31,9 +31,9 @@ from validaciones import _guardar_fila_por_encabezado, _actualizar_fila_por_id, 
 # estado hay que pasar (ver _bloque_botones_estado).
 ACTION_CAMBIAR_ESTADO = "cambiar_estado_caso"
 
-# No se pone un botón para volver a "Abierto": es el estado inicial de todo caso nuevo, así
-# que no hace falta un botón para "reabrirlo" en el mismo instante en que se crea.
-ESTADOS_CON_BOTON = [e for e in ESTADOS_CASO if e != "Abierto"]
+# Se incluye también "Abierto" (aunque sea el estado inicial de todo caso nuevo) para poder
+# reabrir un caso que se cerró o finalizó por error, sin tener que ir al Sheet a mano.
+ESTADOS_CON_BOTON = list(ESTADOS_CASO)
 
 EMOJI_ESTADO = {
     "Abierto": "🔵", "En espera": "🟡", "Sin respuesta": "🟠", "Cerrado": "✅", "Finalizado": "🏁",
