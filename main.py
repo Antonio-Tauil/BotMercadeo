@@ -15,7 +15,9 @@ def ayuda(ack, respond):
     respond(
         "*Comandos disponibles:*\n"
         "• `/caso-mercadeo` — reportar un caso nuevo (elige el tipo y llena el formulario).\n"
-        "\n_Próximamente: cambio de estatus de un caso ya registrado (fase 2)._"
+        "• Para cambiar el estado de un caso ya registrado, usa los botones que aparecen debajo "
+        "de su tarjeta en el canal de casos — no hace falta ningún comando.\n"
+        "\n_Próximamente: resumen personal de casos por agente (fase 2)._"
     )
 
 
