@@ -8,6 +8,7 @@ import re
 import time
 import unicodedata
 from datetime import date
+from gspread.utils import rowcol_to_a1
 
 
 # ============ GUARDAR EN SHEETS POR NOMBRE DE COLUMNA ============
@@ -21,7 +22,13 @@ def _guardar_fila_por_encabezado(sheet, datos):
     """
     Guarda una fila nueva colocando cada valor en la columna que le corresponde POR NOMBRE.
     'datos' es un diccionario {nombre_de_columna: valor}. Si una clave no tiene columna con
-    ese nombre en el Sheet, su valor se agrega al final (para no perderlo).
+    ese nombre en el Sheet todavía (por ejemplo, una pestaña vieja a la que le falta "ID
+    caso" porque se creó antes de agregar esa función), la pestaña se "autorepara" sola: se
+    escribe el encabezado que falta en la fila 1, en la misma columna donde va a caer el
+    valor, ANTES de guardar la fila — así nadie tiene que entrar al Sheet a mano a escribir
+    encabezados nuevos. (Antes, el valor se pegaba igual al final pero SIN encabezado, lo que
+    lo dejaba imposible de encontrar por nombre después — ese fue justo el motivo de que los
+    botones de estado no encontraran la columna 'ID caso' en pestañas viejas.)
     """
     encabezados_sheet = _con_reintento(lambda: sheet.row_values(1))
     restantes = dict(datos)
@@ -34,8 +41,20 @@ def _guardar_fila_por_encabezado(sheet, datos):
                 valor_encontrado = restantes.pop(clave)
                 break
         fila.append(valor_encontrado)
-    fila.extend(restantes.values())
-    _con_reintento(lambda: sheet.append_row(fila))
+    if restantes:
+        primera_col_nueva = len(encabezados_sheet) + 1
+        nuevos_encabezados = list(restantes.keys())
+        rango = (f"{rowcol_to_a1(1, primera_col_nueva)}:"
+                 f"{rowcol_to_a1(1, primera_col_nueva + len(nuevos_encabezados) - 1)}")
+        _con_reintento(lambda: sheet.update(range_name=rango, values=[nuevos_encabezados]))
+        fila.extend(restantes.values())
+    # value_input_option="USER_ENTERED": le pide a Sheets que interprete cada valor tal como
+    # lo interpretaría si una persona lo hubiera tecleado a mano. Sin esto (el modo por
+    # defecto, "RAW"), "Fecha alta"/"Fecha actualizacion" quedaban guardadas como texto
+    # plano, y ninguna fórmula de fecha (COUNTIFS, SUMPRODUCT con fechas, etc.) las podía
+    # comparar con HOY()/TODAY(). Con USER_ENTERED, Sheets reconoce el patrón DD/MM/AAAA
+    # HH:MM y lo guarda como fecha real, sin cambiar cómo se ve la celda.
+    _con_reintento(lambda: sheet.append_row(fila, value_input_option="USER_ENTERED"))
 
 
 def _columna_por_nombre(ws, nombre):
@@ -67,6 +86,10 @@ def _actualizar_fila_por_id(ws, columna_id, valor_id, cambios):
     for nombre_columna, nuevo_valor in cambios.items():
         col = _columna_por_nombre(ws, nombre_columna)
         if col is not None:
+            # ws.update_cell() de gspread ya usa "USER_ENTERED" internamente (a diferencia de
+            # append_row(), que por defecto usa "RAW") — por eso "Fecha actualizacion" ya se
+            # guardaba como fecha real incluso antes de este ajuste; el que faltaba era
+            # "Fecha alta" en el guardado inicial (ver _guardar_fila_por_encabezado arriba).
             _con_reintento(lambda c=col, v=nuevo_valor: ws.update_cell(fila_idx, c, v))
 # ============ FIN GUARDAR POR NOMBRE DE COLUMNA ============
 
