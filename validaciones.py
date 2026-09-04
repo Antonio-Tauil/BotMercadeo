@@ -8,7 +8,7 @@ import re
 import time
 import unicodedata
 from datetime import date
-from gspread.utils import rowcol_to_a1
+from gspread.utils import rowcol_to_a1, a1_to_rowcol
 
 
 # ============ GUARDAR EN SHEETS POR NOMBRE DE COLUMNA ============
@@ -16,6 +16,13 @@ def _normalizar_encabezado(texto):
     t = str(texto or "").strip().lower()
     t = unicodedata.normalize("NFKD", t)
     return "".join(c for c in t if not unicodedata.combining(c))
+
+
+# Únicas columnas que de verdad necesitan que Sheets las reconozca como fecha real (para que
+# fórmulas como COUNTIFS/SUMPRODUCT con HOY()/TODAY() las puedan comparar). Todo lo demás
+# (Telefono, Cedula, Referencia, etc.) se guarda tal cual se escribió, sin que Sheets intente
+# "adivinar" el tipo de dato.
+_COLUMNAS_FECHA = {"fecha alta", "fecha actualizacion"}
 
 
 def _guardar_fila_por_encabezado(sheet, datos):
@@ -29,6 +36,15 @@ def _guardar_fila_por_encabezado(sheet, datos):
     encabezados nuevos. (Antes, el valor se pegaba igual al final pero SIN encabezado, lo que
     lo dejaba imposible de encontrar por nombre después — ese fue justo el motivo de que los
     botones de estado no encontraran la columna 'ID caso' en pestañas viejas.)
+
+    La fila se guarda primero con value_input_option="RAW" (cada valor tal cual llega, sin que
+    Sheets lo reinterprete) y DESPUÉS, en una segunda pasada, se reescriben puntualmente solo
+    las columnas de fecha ("Fecha alta"/"Fecha actualizacion") para que Sheets sí las reconozca
+    como fecha real. Esto reemplaza el enfoque anterior de mandar TODA la fila con
+    value_input_option="USER_ENTERED", que sí lograba que las fechas quedaran bien pero, como
+    efecto secundario, hacía que Sheets tratara de "interpretar" también el resto de las
+    columnas — y un Teléfono como "0414-8210294" se leía como una resta y quedaba guardado como
+    "-8210294" (el bug reportado el 03-04/09/2026 en las pestañas Liquidacion y Conciliacion).
     """
     encabezados_sheet = _con_reintento(lambda: sheet.row_values(1))
     restantes = dict(datos)
@@ -41,6 +57,7 @@ def _guardar_fila_por_encabezado(sheet, datos):
                 valor_encontrado = restantes.pop(clave)
                 break
         fila.append(valor_encontrado)
+    nuevos_encabezados = []
     if restantes:
         primera_col_nueva = len(encabezados_sheet) + 1
         nuevos_encabezados = list(restantes.keys())
@@ -48,13 +65,30 @@ def _guardar_fila_por_encabezado(sheet, datos):
                  f"{rowcol_to_a1(1, primera_col_nueva + len(nuevos_encabezados) - 1)}")
         _con_reintento(lambda: sheet.update(range_name=rango, values=[nuevos_encabezados]))
         fila.extend(restantes.values())
-    # value_input_option="USER_ENTERED": le pide a Sheets que interprete cada valor tal como
-    # lo interpretaría si una persona lo hubiera tecleado a mano. Sin esto (el modo por
-    # defecto, "RAW"), "Fecha alta"/"Fecha actualizacion" quedaban guardadas como texto
-    # plano, y ninguna fórmula de fecha (COUNTIFS, SUMPRODUCT con fechas, etc.) las podía
-    # comparar con HOY()/TODAY(). Con USER_ENTERED, Sheets reconoce el patrón DD/MM/AAAA
-    # HH:MM y lo guarda como fecha real, sin cambiar cómo se ve la celda.
-    _con_reintento(lambda: sheet.append_row(fila, value_input_option="USER_ENTERED"))
+
+    respuesta = _con_reintento(lambda: sheet.append_row(fila, value_input_option="RAW"))
+
+    # Localizamos la fila recién creada a partir de la respuesta de Sheets (updates.updatedRange,
+    # ej. "Conciliacion!A15:L15") para poder corregir SOLO las columnas de fecha, sin tocar nada
+    # más de la fila que acabamos de guardar tal cual.
+    fila_idx = None
+    try:
+        rango_creado = respuesta["updates"]["updatedRange"]
+        primera_celda = rango_creado.split("!")[-1].split(":")[0]
+        fila_idx, _ = a1_to_rowcol(primera_celda)
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+        fila_idx = None
+
+    if fila_idx is not None:
+        encabezados_finales = encabezados_sheet + nuevos_encabezados
+        for i, encabezado in enumerate(encabezados_finales):
+            if i < len(fila) and fila[i] and _normalizar_encabezado(encabezado) in _COLUMNAS_FECHA:
+                col = i + 1
+                valor = fila[i]
+                # ws.update_cell() de gspread ya usa "USER_ENTERED" internamente (ver
+                # _actualizar_fila_por_id más abajo) — por eso esta llamada puntual sí convierte
+                # el texto de fecha en fecha real de Sheets, sin afectar ninguna otra columna.
+                _con_reintento(lambda f=fila_idx, c=col, v=valor: sheet.update_cell(f, c, v))
 
 
 def _columna_por_nombre(ws, nombre):
