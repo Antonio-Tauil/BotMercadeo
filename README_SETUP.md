@@ -1,4 +1,4 @@
-# BotMercadeo — Guía para tenerlo listo el viernes
+# BotMercadeo 
 
 Este bot cubre el **Componente 4 (Slack)** y alimenta el **Componente 5 (Sheets)** del
 documento de requerimientos. NO incluye la parte de CRM (Chatwoot/Zendesk), Meta Business
